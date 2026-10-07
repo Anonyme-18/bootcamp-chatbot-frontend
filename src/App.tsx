@@ -1,18 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
-import {
-  createConversation,
-  getMessages,
-  listConversations,
-  sendMessage,
-  type ConversationSummary,
-} from './api'
+import { cancelStream, createConversation, getMessages, listConversations, listModels, streamMessage, type ConversationSummary, type TokenUsage } from './api'
 import ChatWindow, { type ChatMessage } from './components/ChatWindow'
 import Sidebar from './components/Sidebar'
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : 'Une erreur est survenue.'
-}
 
 export default function App() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -21,116 +11,78 @@ export default function App() {
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<string[]>([])
+  const [model, setModel] = useState('')
+  const [retryRequest, setRetryRequest] = useState<{ text: string; model: string } | null>(null)
+  const activeRequest = useRef<{ controller: AbortController; requestId: string } | null>(null)
 
-  // On startup, load the history and open the most recent conversation.
   useEffect(() => {
-    listConversations()
-      .then((list) => {
-        setConversations(list)
-        if (list.length > 0) setActiveId(list[0].id)
-      })
-      .catch((err) => setError(errorMessage(err)))
+    listModels().then(({ models }) => { setModels(models); setModel(models[0] ?? '') }).catch((e) => setError(e.message))
+    listConversations().then((items) => { setConversations(items); if (items[0]) setActiveId(items[0].id) }).catch((e) => setError(e.message))
   }, [])
-
-  // Load the messages whenever another conversation is opened.
   useEffect(() => {
     if (activeId === null) return
-    let cancelled = false
-    getMessages(activeId)
-      .then((list) => {
-        if (!cancelled) setMessages(list.map(({ role, content }) => ({ role, content })))
-      })
-      .catch((err) => !cancelled && setError(errorMessage(err)))
-    return () => {
-      cancelled = true
-    }
+    getMessages(activeId).then((items) => setMessages(items.map(({ role, content }) => ({ role, content })))).catch((e) => setError(e.message))
   }, [activeId])
 
-  function selectConversation(id: number) {
-    if (loading || id === activeId) return
-    setError(null)
-    setDraft('')
-    setMessages([])
-    setActiveId(id)
-  }
-
   async function handleNew() {
-    if (loading) return
-    setError(null)
-    try {
-      const id = await createConversation()
-      setConversations((list) => [
-        { id, created_at: new Date().toISOString(), preview: null },
-        ...list,
-      ])
-      setDraft('')
-      setMessages([])
-      setActiveId(id)
-    } catch (err) {
-      setError(errorMessage(err))
-    }
+    const id = await createConversation()
+    setConversations((items) => [{ id, created_at: new Date().toISOString(), preview: null }, ...items])
+    setActiveId(id)
+    setMessages([])
   }
 
-  async function handleSend() {
-    if (activeId === null) return
-    const text = draft.trim()
-    const isFirstMessage = messages.length === 0
-    setError(null)
+  async function sendMessage(text: string, selectedModel: string) {
+    if (activeId === null || !text.trim() || !selectedModel) return
+    const conversationId = activeId
     setDraft('')
-    setMessages((list) => [...list, { role: 'user', content: text }])
+    setError(null)
+    setRetryRequest(null)
     setLoading(true)
+    setMessages((items) => [...items, { role: 'user', content: text }, { role: 'assistant', content: '' }])
+
+    const controller = new AbortController()
+    const requestId = crypto.randomUUID()
+    activeRequest.current = { controller, requestId }
     try {
-      const { reply, notification } = await sendMessage(activeId, text)
-      setMessages((list) => [
-        ...list,
-        { role: 'assistant', content: reply },
-        ...(notification ? [{ role: 'system-notification' as const, content: notification }] : []),
-      ])
-      // The first message becomes the conversation's preview in the sidebar.
-      if (isFirstMessage) setConversations(await listConversations())
-    } catch (err) {
-      // The backend didn't save the turn: drop the optimistic message and give the text back.
-      setMessages((list) => list.slice(0, -1))
+      await streamMessage(
+        conversationId,
+        text,
+        selectedModel,
+        requestId,
+        controller.signal,
+        (token) => setMessages((items) => items.map((item, index) => index === items.length - 1 ? { ...item, content: item.content + token } : item)),
+        (usage: TokenUsage) => setMessages((items) => items.map((item, index) => index === items.length - 1 ? { ...item, usage } : item)),
+      )
+      setRetryRequest(null)
+      try { setConversations(await listConversations()) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Impossible de rafraîchir les conversations') }
+    } catch (cause) {
+      setMessages((items) => items.slice(0, -2))
       setDraft(text)
-      setError(errorMessage(err))
+      setRetryRequest({ text, model: selectedModel })
+      setError(controller.signal.aborted ? 'Génération arrêtée. Rien n’a été enregistré.' : cause instanceof Error ? cause.message : 'Erreur de génération')
     } finally {
+      if (activeRequest.current?.controller === controller) activeRequest.current = null
       setLoading(false)
     }
   }
 
+  function handleStop() {
+    const request = activeRequest.current
+    if (!request) return
+    void cancelStream(request.requestId).catch(() => undefined)
+    request.controller.abort()
+  }
+
   return (
     <div className="app">
-      <Sidebar
-        conversations={conversations}
-        activeId={activeId}
-        onSelect={selectConversation}
-        onNew={handleNew}
-      />
+      <Sidebar conversations={conversations} activeId={activeId} onSelect={setActiveId} onNew={handleNew} />
       <main className="main">
-        {error && (
-          <div className="error" role="alert">
-            {error}
-            <button onClick={() => setError(null)} aria-label="Fermer">
-              ×
-            </button>
-          </div>
-        )}
-        {activeId === null ? (
-          <div className="empty">
-            <p>Aucune conversation ouverte.</p>
-            <button className="new-button" onClick={handleNew}>
-              + Nouvelle conversation
-            </button>
-          </div>
-        ) : (
-          <ChatWindow
-            messages={messages}
-            loading={loading}
-            draft={draft}
-            onDraftChange={setDraft}
-            onSend={handleSend}
-          />
-        )}
+        {error && <div className="error" role="alert">{error}{retryRequest && <button className="retry-button" onClick={() => void sendMessage(retryRequest.text, retryRequest.model)}>Réessayer</button>}</div>}
+        {activeId === null ? <div className="empty"><button className="new-button" onClick={handleNew}>+ Nouvelle conversation</button></div> : <>
+          <label className="model-picker">Modèle : <select value={model} onChange={(event) => setModel(event.target.value)} disabled={loading}>{models.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <ChatWindow messages={messages} loading={loading} draft={draft} onDraftChange={setDraft} onSend={() => void sendMessage(draft.trim(), model)} onStop={handleStop} />
+        </>}
       </main>
     </div>
   )

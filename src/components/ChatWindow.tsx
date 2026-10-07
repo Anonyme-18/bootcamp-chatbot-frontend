@@ -1,10 +1,11 @@
 import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import Markdown from 'react-markdown'
-import type { Role } from '../api'
+import type { Role, TokenUsage } from '../api'
 
 export interface ChatMessage {
   role: Role
   content: string
+  usage?: TokenUsage
 }
 
 interface ChatWindowProps {
@@ -13,9 +14,10 @@ interface ChatWindowProps {
   draft: string
   onDraftChange: (value: string) => void
   onSend: () => void
+  onStop: () => void
 }
 
-export default function ChatWindow({ messages, loading, draft, onDraftChange, onSend }: ChatWindowProps) {
+export default function ChatWindow({ messages, loading, draft, onDraftChange, onSend, onStop }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Keep the latest message in view.
@@ -40,14 +42,19 @@ export default function ChatWindow({ messages, loading, draft, onDraftChange, on
           <p className="muted center">Pose ta première question à Study Buddy.</p>
         )}
         {messages.map((m, i) =>
-          m.role === 'system-notification' ? (
+          m.role === 'quiz' ? (
+            <div key={i} className="quiz-card">
+              <strong>Question de révision</strong>
+              <span>{m.content}</span>
+            </div>
+          ) : m.role === 'system-notification' ? (
             <div key={i} className="notification">
               {m.content}
             </div>
           ) : (
             <div key={i} className={`bubble ${m.role}`}>
               {/* The LLM answers in Markdown; user messages are shown as typed. */}
-              {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
+              {m.role === 'assistant' ? <><Markdown>{m.content}</Markdown>{m.usage && <small className="token-usage">Tokens : {m.usage.prompt_tokens} entrée · {m.usage.completion_tokens} réponse · {m.usage.total_tokens} total</small>}</> : m.content}
             </div>
           ),
         )}
@@ -64,9 +71,7 @@ export default function ChatWindow({ messages, loading, draft, onDraftChange, on
           disabled={loading}
           autoFocus
         />
-        <button type="submit" disabled={loading || !draft.trim()}>
-          Envoyer
-        </button>
+        {loading ? <button type="button" className="stop-button" onClick={onStop}>Stop</button> : <button type="submit" disabled={!draft.trim()}>Envoyer</button>}
       </form>
     </section>
   )

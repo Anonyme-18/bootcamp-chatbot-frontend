@@ -2,6 +2,8 @@
 
 Interface React + TypeScript (Vite) pour le backend `bootcamp-chatbot-backend`.
 
+Après une erreur, le texte est restauré et le bouton « Réessayer » renvoie le même message avec le même modèle. Pendant la génération, « Stop » appelle la route d’annulation du backend, qui ferme le flux vers le fournisseur : le texte partiel est retiré et n’est pas enregistré. Les tokens consommés s’affichent sous la réponse lorsque le fournisseur renvoie les statistiques d’usage.
+
 ## Lancer en local
 
 1. Démarrer le backend (port 8000) depuis `bootcamp-chatbot-backend` :

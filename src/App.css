@@ -192,11 +192,36 @@
   font-size: 0.8rem;
 }
 
+.error .retry-button {
+  flex-shrink: 0;
+  margin-left: 12px;
+  padding: 6px 12px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.quiz-card {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 80%;
+  padding: 12px 16px;
+  border: 1px solid #d9a441;
+  border-radius: 12px;
+  background: #fff8e5;
+  color: #624400;
+}
+
 .bubble.typing {
   color: var(--muted);
 }
 
 .composer {
+  position: relative;
+  z-index: 2;
   display: flex;
   gap: 8px;
   padding: 12px max(16px, calc((100% - 760px) / 2)) 20px;
@@ -226,6 +251,23 @@
 .composer textarea:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.composer .stop-button {
+  position: relative;
+  z-index: 3;
+  flex-shrink: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  background: #b42318;
+  color: #fff;
+}
+
+.token-usage {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .muted {
